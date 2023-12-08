@@ -65,7 +65,6 @@ pub async fn read_user(
     extract::State(pool): extract::State<PgPool>,
 ) -> Result<axum::Json<Vec<User>>, http::StatusCode> {
     let query_string: String = "SELECT * FROM \"user\";".to_string();
-    println!("{}", format!("executing: {}", query_string));
     let res = sqlx::query_as::<_, User>(&query_string)
         .fetch_all(&pool)
         .await;
@@ -77,5 +76,36 @@ pub async fn read_user(
             println!("{}", e.to_string());
             Err(http::StatusCode::INTERNAL_SERVER_ERROR)
         }
+    }
+}
+
+pub async fn update_user(
+    extract::State(pool): extract::State<PgPool>,
+    extract::Path(id): extract::Path<uuid::Uuid>,
+    axum::Json(payload): axum::Json<CreateUser>
+) -> http::StatusCode {
+    let now = chrono::Utc::now();
+
+    let res = sqlx::query(
+        r#"
+        UPDATE "user"
+        SET name = $1, email = $2, updated_at = $3
+        WHERE id = $4
+        "#,
+    )
+        .bind(&payload.name)
+        .bind(&payload.email)
+        .bind(&now)
+        .bind(&id)
+        .execute(&pool)
+        .await
+        .map(|res| match res.rows_affected() {
+            0 => http::StatusCode::NOT_FOUND,
+            _ => http::StatusCode::OK,
+        });
+
+    match res {
+        Ok(status) => status,
+        Err(_) => http::StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
