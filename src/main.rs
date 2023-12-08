@@ -17,6 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     let app = Router::new()
         .route("/", get(handlers::health))
         .route("/user", post(handlers::create_user))
+        .route("/user", get(handlers::read_user))
         .with_state(pool);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 

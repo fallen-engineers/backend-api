@@ -1,8 +1,8 @@
 use axum::{extract, http};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool};
 
-#[derive(Serialize)]
+#[derive(Serialize, FromRow)]
 pub struct User {
     id: uuid::Uuid,
     name: String,
@@ -58,5 +58,24 @@ pub async fn create_user(
     match res {
         Ok(_) => Ok((http::StatusCode::CREATED, axum::Json(user))),
         Err(_) => Err(http::StatusCode::INTERNAL_SERVER_ERROR)
+    }
+}
+
+pub async fn read_user(
+    extract::State(pool): extract::State<PgPool>,
+) -> Result<axum::Json<Vec<User>>, http::StatusCode> {
+    let query_string: String = "SELECT * FROM \"user\";".to_string();
+    println!("{}", format!("executing: {}", query_string));
+    let res = sqlx::query_as::<_, User>(&query_string)
+        .fetch_all(&pool)
+        .await;
+
+
+    match res {
+        Ok(user) => Ok(axum::Json(user)),
+        Err(e) => {
+            println!("{}", e.to_string());
+            Err(http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
