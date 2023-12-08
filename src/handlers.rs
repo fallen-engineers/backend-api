@@ -43,7 +43,7 @@ pub async fn create_user(
 
     let res = sqlx::query(
         r#"
-        INSERT INTO user (id, name, email, inserted_at, updated_at)
+        INSERT INTO "user" (id, name, email, inserted_at, updated_at)
         VALUES ($1, $2, $3, $4, $5)
         "#
     )
