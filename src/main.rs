@@ -9,10 +9,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let database_url = dotenv::var("DATABASE_URL").expect("missing DATABASE_URL env");
 
+    println!("connecting to database");
+
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
-        .await?;
+        .await
+        .expect("Could not connect to database");
+
+    println!("{}", format!("starting server at port {}", port));
 
     let app = Router::new()
         .route("/", get(handlers::health))
@@ -22,6 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         .route("/user/:id", delete(handlers::delete_user))
         .with_state(pool);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+
+    println!("Server started at http://localhost:{}", port);
 
     axum::serve(listener, app)
         .await

@@ -26,7 +26,7 @@ impl User {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateUser {
+pub struct CreateUserStruct {
     name: String,
     email: String,
 }
@@ -37,7 +37,7 @@ pub async fn health() -> http::StatusCode {
 
 pub async fn create_user(
     extract::State(pool): extract::State<PgPool>,
-    axum::Json(payload): axum::Json<CreateUser>,
+    axum::Json(payload): axum::Json<CreateUserStruct>,
 ) -> Result<(http::StatusCode, axum::Json<User>), http::StatusCode> {
     let user = User::new(payload.name, payload.email);
 
@@ -82,7 +82,7 @@ pub async fn read_user(
 pub async fn update_user(
     extract::State(pool): extract::State<PgPool>,
     extract::Path(id): extract::Path<uuid::Uuid>,
-    axum::Json(payload): axum::Json<CreateUser>
+    axum::Json(payload): axum::Json<CreateUserStruct>
 ) -> http::StatusCode {
     let now = chrono::Utc::now();
 
