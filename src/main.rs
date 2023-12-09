@@ -1,6 +1,7 @@
 mod handlers;
-use axum::routing::{get, post, put, delete, Router};
+mod routes;
 use sqlx::postgres::PgPoolOptions;
+use crate::routes::routes;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
@@ -19,13 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     println!("{}", format!("starting server at port {}", port));
 
-    let app = Router::new()
-        .route("/", get(handlers::health))
-        .route("/user", post(handlers::create_user))
-        .route("/user", get(handlers::read_user))
-        .route("/user/:id", put(handlers::update_user))
-        .route("/user/:id", delete(handlers::delete_user))
-        .with_state(pool);
+    let app = routes(pool);
+
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
     println!("Server started at http://localhost:{}", port);
