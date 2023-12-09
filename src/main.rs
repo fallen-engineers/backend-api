@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let database_url = dotenv::var("DATABASE_URL").expect("missing DATABASE_URL env");
 
-    println!("connecting to database");
+    println!("Connecting to db...");
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
