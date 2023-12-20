@@ -8,6 +8,7 @@ pub struct User {
     pub id: uuid::Uuid,
     pub name: String,
     pub email: String,
+    pub username: String,
     pub password: String,
     pub role: String,
     pub photo: Option<String>,
@@ -28,11 +29,12 @@ pub struct TokenClaims {
 pub struct RegisterUserSchema {
     pub name: String,
     pub email: String,
+    pub username: String,
     pub password: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LoginUserSchema {
-    pub email: String,
+    pub email_or_username: String,
     pub password: String,
 }

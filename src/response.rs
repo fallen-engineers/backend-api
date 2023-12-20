@@ -7,6 +7,7 @@ pub struct FilteredUser {
     pub id: String,
     pub name: String,
     pub email: String,
+    pub username: String,
     pub role: String,
     pub photo: Option<String>,
     pub createdAt: DateTime<Utc>,

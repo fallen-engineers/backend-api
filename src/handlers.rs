@@ -27,6 +27,7 @@ fn filter_user_record(user: &User) -> FilteredUser {
     FilteredUser {
         id: user.id.to_string(),
         email: user.email.to_owned(),
+        username: user.username.to_owned(),
         name: user.name.to_owned(),
         photo: user.photo.clone(),
         role: user.role.to_owned(),
@@ -40,8 +41,9 @@ pub async fn register_user_handler(
     Json(body): Json<RegisterUserSchema>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let user_exists: Option<bool> =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM \"users\" WHERE email = $1)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM \"users\" WHERE email = $1 OR username = $2)")
             .bind(body.email.to_owned().to_ascii_lowercase())
+            .bind(body.username.to_owned().to_ascii_lowercase())
             .fetch_one(&data.db)
             .await
             .map_err(|e| {
@@ -56,7 +58,7 @@ pub async fn register_user_handler(
         if exists {
             let error_response = json!({
                 "status": "fail",
-                "message": "User with that email already exists",
+                "message": "User with that email or username already exists",
             });
             return Err((StatusCode::CONFLICT, Json(error_response)));
         }
@@ -76,10 +78,11 @@ pub async fn register_user_handler(
 
     let user = sqlx::query_as!(
         User,
-        "INSERT INTO \"users\" (name,email,password) VALUES ($1, $2, $3) RETURNING *",
+        "INSERT INTO \"users\" (name,email,password,username) VALUES ($1, $2, $3, $4) RETURNING *",
         body.name.to_string(),
         body.email.to_string().to_ascii_lowercase(),
-        hashed_password
+        hashed_password,
+        body.username.to_string().to_ascii_lowercase()
     )
         .fetch_one(&data.db)
         .await
@@ -104,8 +107,8 @@ pub async fn login_user_handler(
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let user = sqlx::query_as!(
         User,
-        "SELECT * FROM \"users\" WHERE email = $1",
-        body.email.to_ascii_lowercase()
+        "SELECT * FROM \"users\" WHERE email = $1 OR username = $1",
+        body.email_or_username.to_ascii_lowercase()
     )
         .fetch_optional(&data.db)
         .await
