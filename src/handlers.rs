@@ -1,135 +1,231 @@
-use axum::{extract, http};
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use std::sync::Arc;
+use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use axum::{extract::State, http::{header, Response, StatusCode}, response::IntoResponse, Json, Extension};
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use jsonwebtoken::{encode, EncodingKey, Header};
+use rand_core::OsRng;
+use serde_json::json;
 
-#[derive(Serialize, FromRow)]
-pub struct User {
-    id: uuid::Uuid,
-    name: String,
-    email: String,
-    inserted_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
+use crate::{
+    model::{LoginUserSchema, RegisterUserSchema, TokenClaims, User},
+    response::FilteredUser,
+    AppState,
+};
+
+pub async fn health_checker_handler() -> impl IntoResponse {
+    const MESSAGE: &str = "RUST UCLM COOP API";
+
+    let json_response = json!({
+        "status": "success",
+        "message": MESSAGE
+    });
+
+    Json(json_response)
 }
 
-impl User {
-    fn new(name: String, email: String) -> Self {
-        let now = chrono::Utc::now();
-
-        Self {
-            id: uuid::Uuid::new_v4(),
-            name,
-            email,
-            inserted_at: now,
-            updated_at: now,
-        }
+fn filter_user_record(user: &User) -> FilteredUser {
+    FilteredUser {
+        id: user.id.to_string(),
+        email: user.email.to_owned(),
+        name: user.name.to_owned(),
+        photo: user.photo.clone(),
+        role: user.role.to_owned(),
+        createdAt: user.created_at.unwrap(),
+        updatedAt: user.updated_at.unwrap(),
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateUserStruct {
-    name: String,
-    email: String,
-}
+pub async fn register_user_handler(
+    State(data): State<Arc<AppState>>,
+    Json(body): Json<RegisterUserSchema>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let user_exists: Option<bool> =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM \"users\" WHERE email = $1)")
+            .bind(body.email.to_owned().to_ascii_lowercase())
+            .fetch_one(&data.db)
+            .await
+            .map_err(|e| {
+                let error_response = json!({
+                    "status": "fail",
+                    "message": format!("Database error: {}", e),
+                });
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+            })?;
 
-pub async fn health() -> http::StatusCode {
-    http::StatusCode::OK
-}
+    if let Some(exists) = user_exists {
+        if exists {
+            let error_response = json!({
+                "status": "fail",
+                "message": "User with that email already exists",
+            });
+            return Err((StatusCode::CONFLICT, Json(error_response)));
+        }
+    }
 
-pub async fn create_user(
-    extract::State(pool): extract::State<PgPool>,
-    axum::Json(payload): axum::Json<CreateUserStruct>,
-) -> Result<(http::StatusCode, axum::Json<User>), http::StatusCode> {
-    let user = User::new(payload.name, payload.email);
+    let salt = SaltString::generate(&mut OsRng);
+    let hashed_password = Argon2::default()
+        .hash_password(body.password.as_bytes(), &salt)
+        .map_err(|e| {
+            let error_response = json!({
+                "status": "fail",
+                "message": format!("Error while hashing password: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })
+        .map(|hash| hash.to_string())?;
 
-    let res = sqlx::query(
-        r#"
-        INSERT INTO "user" (id, name, email, inserted_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5)
-        "#
+    let user = sqlx::query_as!(
+        User,
+        "INSERT INTO \"users\" (name,email,password) VALUES ($1, $2, $3) RETURNING *",
+        body.name.to_string(),
+        body.email.to_string().to_ascii_lowercase(),
+        hashed_password
     )
-        .bind(&user.id)
-        .bind(&user.name)
-        .bind(&user.email)
-        .bind(&user.inserted_at)
-        .bind(&user.updated_at)
-        .execute(&pool)
-        .await;
+        .fetch_one(&data.db)
+        .await
+        .map_err(|e| {
+            let error_response = json!({
+                "status": "fail",
+                "message": format!("Database error: {}", e),
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })?;
 
-    match res {
-        Ok(_) => Ok((http::StatusCode::CREATED, axum::Json(user))),
-        Err(_) => Err(http::StatusCode::INTERNAL_SERVER_ERROR)
-    }
+    let user_response = json!({"status": "success", "data": json!({
+        "user": filter_user_record(&user)
+    })});
+
+    Ok(Json(user_response))
 }
 
-pub async fn read_user(
-    extract::State(pool): extract::State<PgPool>,
-) -> Result<axum::Json<Vec<User>>, http::StatusCode> {
-    let query_string: String = "SELECT * FROM \"user\";".to_string();
-    let res = sqlx::query_as::<_, User>(&query_string)
-        .fetch_all(&pool)
-        .await;
+pub async fn login_user_handler(
+    State(data): State<Arc<AppState>>,
+    Json(body): Json<LoginUserSchema>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let user = sqlx::query_as!(
+        User,
+        "SELECT * FROM \"users\" WHERE email = $1",
+        body.email.to_ascii_lowercase()
+    )
+        .fetch_optional(&data.db)
+        .await
+        .map_err(|e| {
+            let error_response = json!({
+                "status": "fail",
+                "message": format!("Database error: {}", e),
+            });
 
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })?
+        .ok_or_else(|| {
+            let error_response = json!({
+                "status": "fail",
+                "message": "Invalid email or password"
+            });
+            (StatusCode::BAD_REQUEST, Json(error_response))
+        })?;
 
-    match res {
-        Ok(user) => Ok(axum::Json(user)),
-        Err(e) => {
-            println!("{}", e.to_string());
-            Err(http::StatusCode::INTERNAL_SERVER_ERROR)
-        }
+    let is_valid = match PasswordHash::new(&user.password) {
+        Ok(parsed_hash) => Argon2::default()
+            .verify_password(body.password.as_bytes(), &parsed_hash)
+            .map_or(false ,|_| true),
+
+        Err(_) => false,
+    };
+
+    if !is_valid {
+        let error_response = json!({
+            "status": "fail",
+            "message": "Invalid email or password"
+        });
+
+        return Err((StatusCode::BAD_REQUEST, Json(error_response)));
     }
-}
 
-pub async fn update_user(
-    extract::State(pool): extract::State<PgPool>,
-    extract::Path(id): extract::Path<uuid::Uuid>,
-    axum::Json(payload): axum::Json<CreateUserStruct>
-) -> http::StatusCode {
     let now = chrono::Utc::now();
+    let iat = now.timestamp() as usize;
+    let exp = (now + chrono::Duration::minutes(60)).timestamp() as usize;
+    let claims: TokenClaims = TokenClaims {
+        sub: user.id.to_string(),
+        exp,
+        iat,
+    };
 
-    let res = sqlx::query(
-        r#"
-        UPDATE "user"
-        SET name = $1, email = $2, updated_at = $3
-        WHERE id = $4
-        "#,
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(data.env.jwt_secret.as_ref()),
     )
-        .bind(&payload.name)
-        .bind(&payload.email)
-        .bind(&now)
-        .bind(&id)
-        .execute(&pool)
-        .await
-        .map(|res| match res.rows_affected() {
-            0 => http::StatusCode::NOT_FOUND,
-            _ => http::StatusCode::OK,
-        });
+        .unwrap();
 
-    match res {
-        Ok(status) => status,
-        Err(_) => http::StatusCode::INTERNAL_SERVER_ERROR,
-    }
+    let cookie = Cookie::build(("token", token.to_owned()))
+        .path("/")
+        .max_age(time::Duration::hours(1))
+        .same_site(SameSite::Lax)
+        .http_only(true);
+
+    let mut response = Response::new(json!({"status": "success", "token": token}).to_string());
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, cookie.to_string().parse().unwrap());
+    Ok(response)
 }
 
-pub async fn delete_user (
-    extract::State(pool): extract::State<PgPool>,
-    extract::Path(id): extract::Path<uuid::Uuid>
-) -> http::StatusCode {
-    let res = sqlx::query(
-        r#"
-        DELETE FROM "user"
-        WHERE id = $1
-        "#
-    )
-        .bind(&id)
-        .execute(&pool)
-        .await
-        .map(|res| match res.rows_affected() {
-            0 => http::StatusCode::NOT_FOUND,
-            _ => http::StatusCode::OK,
-        });
+pub async fn logout_handler() -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)>{
+    let cookie = Cookie::build(("token", ""))
+        .path("/")
+        .max_age(time::Duration::hours(-1))
+        .same_site(SameSite::Lax)
+        .http_only(true);
 
-    match res {
-        Ok(status) => status,
-        Err(_) => http::StatusCode::INTERNAL_SERVER_ERROR,
-    }
+    let mut response = Response::new(json!({"status": "success"}).to_string());
+
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, cookie.to_string().parse().unwrap());
+
+    Ok(response)
+}
+
+pub async fn get_me_handler(
+    Extension(user): Extension<User>
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let json_response = json!({
+        "status": "success",
+        "data": serde_json::json!({
+            "user": filter_user_record(&user)
+        })
+    });
+
+    Ok(Json(json_response))
+}
+
+pub async fn get_all_users_handler(
+    State(data): State<Arc<AppState>>
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let users: Vec<User> = sqlx::query_as!(
+        User,
+        "SELECT * FROM \"users\""
+    )
+        .fetch_all(&data.db)
+        .await
+        .map_err(|e| {
+            let error_response = json!({
+                "status": "fail",
+                "message": format!("Database error: {}", e),
+            });
+
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })?;
+
+    let filtered_users: Vec<FilteredUser> = users.into_iter().map(|user| {filter_user_record(&user)}).collect();
+
+    let json_response = json!({
+        "status": "success",
+        "data": json!({
+            "users": filtered_users
+        })
+    });
+
+    Ok(Json(json_response))
 }

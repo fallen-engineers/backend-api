@@ -1,13 +1,26 @@
-use axum::routing::{get, post, put, delete, Router};
-use sqlx::{Pool, Postgres};
+use std::sync::Arc;
+use axum::middleware;
+use axum::routing::{get, post, Router};
 use crate::handlers;
+use crate::AppState;
+use crate::handlers::{get_me_handler, logout_handler};
+use crate::jwt_auth::auth;
 
-pub fn routes(pool: Pool<Postgres>) -> Router {
+pub fn create_router(app_state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/", get(handlers::health))
-        .route("/user", post(handlers::create_user))
-        .route("/user", get(handlers::read_user))
-        .route("/user/:id", put(handlers::update_user))
-        .route("/user/:id", delete(handlers::delete_user))
-        .with_state(pool)
+        .route("/api/health", get(handlers::health_checker_handler))
+        .route("/api/auth/register", post(handlers::register_user_handler))
+        .route("/api/auth/login", post(handlers::login_user_handler))
+        .route("/api/users/all", get(handlers::get_all_users_handler))
+        .route(
+            "/api/auth/logout",
+            get(logout_handler)
+                .route_layer(middleware::from_fn_with_state(app_state.clone(), auth)),
+        )
+        .route(
+            "/api/users/me",
+            get(get_me_handler)
+                .route_layer(middleware::from_fn_with_state(app_state.clone(), auth))
+        )
+        .with_state(app_state)
 }
