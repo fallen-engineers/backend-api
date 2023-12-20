@@ -31,10 +31,17 @@ pub struct RegisterUserSchema {
     pub email: String,
     pub username: String,
     pub password: String,
+    pub role: Option<String>
 }
 
 #[derive(Debug, Deserialize)]
 pub struct LoginUserSchema {
     pub email_or_username: String,
     pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChangeRoleSchema {
+    pub id: uuid::Uuid,
+    pub role: String
 }

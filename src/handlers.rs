@@ -11,6 +11,7 @@ use crate::{
     response::FilteredUser,
     AppState,
 };
+use crate::model::ChangeRoleSchema;
 
 pub async fn health_checker_handler() -> impl IntoResponse {
     const MESSAGE: &str = "RUST UCLM COOP API";
@@ -64,6 +65,16 @@ pub async fn register_user_handler(
         }
     }
 
+    if let Some(role) = &body.role {
+        if role != "admin" && role != "non_admin" {
+            let error_response = json!({
+                "status": "fail",
+                "message": "Role must either be 'admin' or 'non_admin'"
+            });
+            return Err((StatusCode::BAD_REQUEST, Json(error_response)))
+        }
+    }
+
     let salt = SaltString::generate(&mut OsRng);
     let hashed_password = Argon2::default()
         .hash_password(body.password.as_bytes(), &salt)
@@ -78,11 +89,12 @@ pub async fn register_user_handler(
 
     let user = sqlx::query_as!(
         User,
-        "INSERT INTO \"users\" (name,email,password,username) VALUES ($1, $2, $3, $4) RETURNING *",
+        "INSERT INTO \"users\" (name,email,password,username,role) VALUES ($1, $2, $3, $4, $5) RETURNING *",
         body.name.to_string(),
         body.email.to_string().to_ascii_lowercase(),
         hashed_password,
-        body.username.to_string().to_ascii_lowercase()
+        body.username.to_string().to_ascii_lowercase(),
+        body.role.unwrap_or_else(|| "non_admin".to_string()).to_ascii_lowercase()
     )
         .fetch_one(&data.db)
         .await
@@ -231,4 +243,49 @@ pub async fn get_all_users_handler(
     });
 
     Ok(Json(json_response))
+}
+
+pub async fn change_role_handler(
+    State(data): State<Arc<AppState>>,
+    Json(body): Json<ChangeRoleSchema>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    // Validate role
+    if body.role != "admin" && body.role != "non_admin" {
+        let error_response = json!({
+            "status": "fail",
+            "message": "Role must be either 'admin' or 'non_admin'",
+        });
+        return Err((StatusCode::BAD_REQUEST, Json(error_response)));
+    }
+
+    // Update user role in database
+    let updated_rows = sqlx::query!(
+        "UPDATE \"users\" SET role = $1 WHERE id = $2",
+        body.role,
+        body.id
+    )
+        .execute(&data.db)
+        .await
+        .map_err(|e| {
+            let error_response = json!({
+            "status": "fail",
+            "message": format!("Database error: {}", e),
+        });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        })?;
+
+    if updated_rows.rows_affected() == 0 {
+        let error_response = json!({
+            "status": "fail",
+            "message": "No user found with the provided ID",
+        });
+        return Err((StatusCode::NOT_FOUND, Json(error_response)));
+    }
+
+    let success_response = json!({
+        "status": "success",
+        "message": "User role updated successfully",
+    });
+
+    Ok(Json(success_response))
 }

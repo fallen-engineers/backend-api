@@ -23,12 +23,11 @@ pub struct ErrorResponse {
     pub message: String,
 }
 
-pub async fn auth(
+async fn get_authenticated_user(
     cookie_jar: CookieJar,
     State(data): State<Arc<AppState>>,
-    mut req: Request<axum::body::Body>,
-    next: Next,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    req: &mut Request<axum::body::Body>
+) -> Result<User, (StatusCode, Json<ErrorResponse>)> {
     let token = cookie_jar
         .get("token")
         .map(|cookie| cookie.value().to_string())
@@ -93,6 +92,36 @@ pub async fn auth(
         };
         (StatusCode::UNAUTHORIZED, Json(json_error))
     })?;
+
+    Ok(user)
+}
+
+pub async fn auth(
+    cookie_jar: CookieJar,
+    state: State<Arc<AppState>>,
+    mut req: Request<axum::body::Body>,
+    next: Next,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let user = get_authenticated_user(cookie_jar, state, &mut req).await?;
+    req.extensions_mut().insert(user);
+    Ok(next.run(req).await)
+}
+
+pub async fn admin_auth(
+    cookie_jar: CookieJar,
+    state: State<Arc<AppState>>,
+    mut req: Request<axum::body::Body>,
+    next: Next,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let user = get_authenticated_user(cookie_jar, state, &mut req).await?;
+
+    if user.role != "admin" {
+        let json_error = ErrorResponse {
+            status: "fail",
+            message: "Only admins can perform this action".to_string(),
+        };
+        return Err((StatusCode::FORBIDDEN, Json(json_error)));
+    }
 
     req.extensions_mut().insert(user);
     Ok(next.run(req).await)
