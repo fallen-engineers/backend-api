@@ -48,5 +48,15 @@ pub fn create_router(app_state: Arc<AppState>) -> Router {
             delete(record_handlers::delete_record_handler)
                 .route_layer(middleware::from_fn_with_state(app_state.clone(), admin_auth))
         )
+        .route(
+            "/api/records/excel",
+            get(record_handlers::create_excel_all_record)
+                .route_layer(middleware::from_fn_with_state(app_state.clone(), auth))
+        )
+        .route(
+            "/api/records/download",
+            get(record_handlers::download_excel_handler)
+                .route_layer(middleware::from_fn_with_state(app_state.clone(), auth))
+        )
         .with_state(app_state)
 }
