@@ -4,6 +4,8 @@ mod config;
 mod model;
 mod response;
 mod jwt_auth;
+mod record_handlers;
+mod record_model;
 
 use std::sync::Arc;
 use axum::http::{HeaderValue, Method};
